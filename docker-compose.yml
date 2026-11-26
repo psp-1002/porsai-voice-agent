@@ -1,16 +1,61 @@
+# docker compose up -d --build   -> runs everything: web (:8000), agent, Piper TTS
+# Secrets and settings come from .env (copy .env.example).
 services:
-  # Self-hosted text to speech: Kokoro-82M with an OpenAI-compatible API on :8880
-  kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+  web:
+    build: .
+    command: uvicorn web.server:app --host 0.0.0.0 --port 8000
+    env_file: .env
     ports:
-      - "8880:8880"
+      - "8000:8000"
     restart: unless-stopped
 
-  # Local Postgres used only by the tests (port 5433 to avoid clashing with a local Postgres)
+  agent:
+    build: .
+    command: python -m app.agent start
+    env_file: .env
+    environment:
+      TTS_URL: http://tts:8890/v1
+    depends_on:
+      - tts
+    restart: unless-stopped
+
+  # Self-hosted text to speech (Piper), OpenAI-compatible API
+  tts:
+    build: .
+    command: uvicorn app.tts_server:app --host 0.0.0.0 --port 8890
+    restart: unless-stopped
+
+  # Optional: HTTPS when self-hosting on a VM:  DOMAIN=... docker compose --profile https up -d
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - web
+
+  # Optional: Kokoro TTS (nicer voice, needs a stronger CPU). Set TTS_PROVIDER=kokoro to use it.
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    profiles: ["kokoro"]
+    ports:
+      - "8880:8880"
+
+  # Local Postgres used only by the tests:  docker compose --profile test up -d testdb
   testdb:
     image: postgres:16
+    profiles: ["test"]
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: voice_test
     ports:
       - "5433:5432"
+
+volumes:
+  caddy_data:

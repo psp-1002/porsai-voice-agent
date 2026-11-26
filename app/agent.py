@@ -6,7 +6,7 @@ Flow of one call:
   business from the database, build the instructions, and start the session.
 
 Pipeline:  caller audio -> Silero VAD -> Groq Whisper (STT) -> Groq Llama (LLM, with tools)
-           -> Kokoro (TTS, self-hosted) -> caller
+           -> Piper (TTS, self-hosted) -> caller
 
 Run locally:   python -m app.agent dev
 """
@@ -58,19 +58,22 @@ def build_llm():
 
 
 def build_tts():
-    provider = os.getenv("TTS_PROVIDER", "kokoro")
+    provider = os.getenv("TTS_PROVIDER", "piper")
+    if provider == "kokoro":
+        # Kokoro-82M via Kokoro-FastAPI. Nicer voice, but too slow on a small CPU.
+        return openai.TTS(base_url=os.getenv("KOKORO_URL", "http://localhost:8880/v1"),
+                          api_key="not-needed", model="kokoro",
+                          voice=os.getenv("KOKORO_VOICE", "af_heart"),
+                          response_format="pcm", sample_rate=24000)
     if provider == "groq":
+        # Orpheus on Groq: only 10 requests/min on the free tier, so not the default.
         return groq.TTS(model="canopylabs/orpheus-v1-english",
                         voice=os.getenv("GROQ_TTS_VOICE", "autumn"))
-    # Kokoro-82M served by Kokoro-FastAPI (OpenAI-compatible endpoint), self-hosted.
-    return openai.TTS(
-        base_url=os.getenv("KOKORO_URL", "http://localhost:8880/v1"),
-        api_key="not-needed",
-        model="kokoro",
-        voice=os.getenv("KOKORO_VOICE", "af_heart"),
-        response_format="pcm",
-        sample_rate=24000,
-    )
+    # Default: Piper, self-hosted (app/tts_server.py). ~0.2 s per sentence on 2 vCPUs.
+    return openai.TTS(base_url=os.getenv("TTS_URL", "http://localhost:8890/v1"),
+                      api_key="not-needed", model="piper", voice="default",
+                      response_format="pcm",
+                      sample_rate=int(os.getenv("TTS_SAMPLE_RATE", "16000")))
 
 
 # ---------------------------------------------------------------------------

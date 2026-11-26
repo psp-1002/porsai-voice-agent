@@ -1,0 +1,6 @@
+# HTTPS in front of the web server. Browsers only allow the microphone on HTTPS.
+# DOMAIN comes from .env, e.g. 140-238-1-2.sslip.io (free, no signup: sslip.io maps the name to the IP).
+# Caddy gets a Let's Encrypt certificate for it automatically.
+{$DOMAIN:localhost} {
+    reverse_proxy web:8000
+}
