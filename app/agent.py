@@ -55,7 +55,9 @@ def build_llm():
     for m in (x.strip() for x in models.split(",") if x.strip()):
         # gpt-oss: low reasoning keeps replies fast. Qwen: turn thinking off.
         effort = "none" if m.startswith("qwen") else "low"
-        llms.append(groq.LLM(model=m, temperature=0.3, reasoning_effort=effort))
+        # Replies are 1-2 spoken sentences; the cap keeps each request small (free-tier budget).
+        llms.append(groq.LLM(model=m, temperature=0.3, reasoning_effort=effort,
+                             max_completion_tokens=int(os.getenv("LLM_MAX_TOKENS", "400"))))
     return llm.FallbackAdapter(llms, attempt_timeout=5.0)
 
 
@@ -243,7 +245,9 @@ async def entrypoint(ctx: JobContext):
 
 def _wire_logging(session: AgentSession, calllog: CallLogger):
     """Transcript, tool calls and per-turn latency -> call_events."""
-    turn = {"user_stopped_at": None, "stages": {}}
+    # detected_at = when the system DETECTED the caller stopped (the assignment's start point)
+    # speech_end_at = when the speech itself ended (earlier, by the VAD silence window)
+    turn = {"detected_at": None, "speech_end_at": None, "stages": {}}
 
     @session.on("conversation_item_added")
     def _item(ev):
@@ -270,23 +274,25 @@ def _wire_logging(session: AgentSession, calllog: CallLogger):
             st.setdefault("end_of_turn_ms", round(m.end_of_utterance_delay * 1000))
         elif isinstance(m, metrics.LLMMetrics):
             st.setdefault("llm_ttft_ms", round(m.ttft * 1000))
-        elif isinstance(m, metrics.TTSMetrics):
+        elif isinstance(m, metrics.TTSMetrics) and m.ttfb >= 0:   # -1 = not reported
             st.setdefault("tts_ttfb_ms", round(m.ttfb * 1000))
 
     @session.on("user_state_changed")
     def _user(ev):
         if ev.old_state == "speaking" and ev.new_state == "listening":
-            # The moment we detected the caller stopped speaking.
-            turn["user_stopped_at"] = ev.speech_timestamp or ev.created_at
+            turn["detected_at"] = ev.created_at
+            turn["speech_end_at"] = ev.speech_timestamp or ev.created_at
             turn["stages"] = {}
 
     @session.on("agent_state_changed")
     def _agent(ev):
-        if ev.new_state == "speaking" and turn["user_stopped_at"]:
+        if ev.new_state == "speaking" and turn["detected_at"]:
             # First audio of the reply is going out to the caller.
-            total = ev.created_at - turn["user_stopped_at"]
-            calllog.log("latency", {"total_ms": round(total * 1000), **turn["stages"]})
-            turn["user_stopped_at"] = None
+            calllog.log("latency", {
+                "total_ms": round((ev.created_at - turn["detected_at"]) * 1000),
+                "from_speech_end_ms": round((ev.created_at - turn["speech_end_at"]) * 1000),
+                **turn["stages"]})
+            turn["detected_at"] = None
 
 
 def _wire_error_handling(session: AgentSession, calllog: CallLogger):

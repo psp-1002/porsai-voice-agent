@@ -1,0 +1,11 @@
+Turns measured: 26
+
+stage                        median ms    p95 ms     n
+TOTAL (stop -> first audio)       1725      6018    26
+end-of-turn detection              585       681    26
+speech to text                     580       679    26
+LLM first token                    552       702    25
+TTS first audio                  -1000     -1000     1
+
+Turns without tool calls: median 1586 ms (n=20)
+Turns with tool calls:    median 2614 ms (n=6)
