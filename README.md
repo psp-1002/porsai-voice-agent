@@ -180,13 +180,46 @@ simultaneous** bookings at one slot; exactly one succeeds.
 
 ## Latency
 
-**Method:** for every reply, from the moment the system detected the caller stopped speaking
-(VAD end of speech) to the moment the first audio of the reply was sent (agent state →
-`speaking`). Stage times come from LiveKit's metrics for the same turn. Every turn is
-logged to `call_events` and summarised by `python scripts/latency_report.py`.
+**Method:** every reply is timed from the moment the caller stopped speaking to the moment
+the first audio of the reply was sent (agent state → `speaking`). Stage times come from
+LiveKit's metrics for the same turn. Every turn is logged to `call_events` and summarised by
+`python scripts/latency_report.py` (raw output in [`docs/latency.txt`](docs/latency.txt)).
 
-<!-- LATENCY_TABLE -->
-_Numbers to be filled from `docs/latency.txt` (measured over real calls on the live system)._
+**Measured on the live system:** 26 turns over 2 real calls (questions, then book → reschedule → cancel),
+browser in Bengaluru → LiveKit Cloud (India South) → agent on my laptop → Groq (US).
+
+| Stage | Median | p95 |
+|---|---|---|
+| **Total: end of speech → first audio of reply** | **1,725 ms** | **6,018 ms** |
+| End of turn (VAD silence + speech-to-text) | 585 ms | 681 ms |
+| Speech to text (Whisper on Groq) | 580 ms | 679 ms |
+| LLM first token (gpt-oss-120b on Groq) | 552 ms | 702 ms |
+| Turns **without** a tool call (n=20) | 1,586 ms | |
+| Turns **with** a tool call (n=6) | 2,614 ms | |
+
+**Honest reading:**
+- **These numbers miss the targets** (1.2 s median, 2 s p95).
+- **Measurement start point:** this run started the clock at the *end of speech*, which is
+  ~350 ms (the VAD silence window) *before* the system *detects* the caller stopped, the start
+  point the brief defines. I've fixed the logging to record both (`total_ms` from detection,
+  `from_speech_end_ms` from speech end). I haven't re-measured with the corrected start point
+  yet; I expect it to be up to a few hundred ms lower, still above 1.2 s.
+- **Where the time goes:** speech-to-text and the LLM are each ~550–600 ms, mostly network
+  round trips from India to Groq's US datacentres plus queueing on the free tier. TTS (Piper,
+  self-hosted) is the smallest stage: I measured ~40–400 ms to first audio depending on
+  sentence length. LiveKit's OpenAI-compatible TTS plugin doesn't report TTS time for my
+  server, so it's not in the table.
+- **The p95** comes from **tool-call turns** (checking or booking needs two LLM round trips)
+  and **free-tier rate limits** (a 429 triggers the fallback to the next model).
+
+**How I'd get under 1.2 s / 2 s:**
+1. **Self-host STT and LLM close to the caller** (Whisper-turbo + gpt-oss-20b on one GPU in an
+   Indian region, vLLM). This removes ~400–600 ms of network time and all rate-limit waits.
+2. **Streaming STT** (transcripts while the caller is still talking) so end-of-turn doesn't
+   wait for a whole-utterance transcription.
+3. **Filler on tool turns** ("Let me check that…") spoken immediately while the tool runs, so
+   the caller hears something within the target even on booking turns.
+4. A smaller/faster LLM for simple FAQ turns, with the 120B reserved for booking flows.
 
 ---
 

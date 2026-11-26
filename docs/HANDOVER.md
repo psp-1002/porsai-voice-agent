@@ -53,4 +53,4 @@ When a caller asks something the receptionist can't answer, it saves a message. 
 | A booking looks wrong | Check `bookings` in the Table Editor. You can cancel by setting `status` to `cancelled`. |
 | It says it's "having a little trouble" | It's briefly busy. Callers can try again in a minute. If it keeps happening, tell me. |
 
-**Contact:** Sourav Prakash · [your phone / WhatsApp] · [your email]
+**Contact:** Sourav Prakash · [7077576634/ WhatsApp] · [souravprusty2001@gmail.com]
