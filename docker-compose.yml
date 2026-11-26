@@ -1,6 +1,12 @@
-# For now: a local Postgres used only by the tests.
-# The agent and web services get added here in later steps.
 services:
+  # Self-hosted text to speech: Kokoro-82M with an OpenAI-compatible API on :8880
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    ports:
+      - "8880:8880"
+    restart: unless-stopped
+
+  # Local Postgres used only by the tests (port 5433 to avoid clashing with a local Postgres)
   testdb:
     image: postgres:16
     environment:

@@ -1,4 +1,8 @@
 asyncpg>=0.29
 python-dotenv>=1.0
+livekit-agents[groq,openai,silero]~=1.9
+livekit-api>=1.0
+fastapi>=0.115
+uvicorn[standard]>=0.30
 pytest>=8
 pytest-asyncio>=0.23

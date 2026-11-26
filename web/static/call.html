@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call {{BUSINESS_NAME}}</title>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.js"></script>
+<style>
+  :root { --bg:#faf7f2; --ink:#1f1d1a; --muted:#7a746b; --accent:#c2573a; --ok:#2f7d55; --card:#fff; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:var(--bg); color:var(--ink); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .card { width:min(440px, 92vw); background:var(--card); border-radius:20px; padding:36px 28px;
+          box-shadow:0 10px 40px rgba(0,0,0,.07); text-align:center; }
+  h1 { margin:0 0 4px; font-size:1.5rem; }
+  .sub { color:var(--muted); margin:0 0 28px; }
+  .orb { width:120px; height:120px; margin:0 auto 22px; border-radius:50%; background:#efe9df;
+         display:flex; align-items:center; justify-content:center; transition:transform .15s, background .3s; }
+  .orb.speaking { background:#f6d9cf; animation:pulse 1s infinite; }
+  .orb.listening { background:#d9ece1; }
+  .orb.thinking { background:#f2ead6; }
+  @keyframes pulse { 50% { transform:scale(1.06); } }
+  button { border:0; border-radius:999px; padding:14px 34px; font-size:1.05rem; font-weight:600;
+           cursor:pointer; color:#fff; background:var(--ok); }
+  button.hangup { background:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  #status { margin:16px 0 0; color:var(--muted); min-height:1.4em; }
+  #log { text-align:left; margin-top:22px; max-height:240px; overflow:auto; font-size:.92rem; }
+  #log p { margin:6px 0; } #log .who { font-weight:600; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>{{BUSINESS_NAME}}</h1>
+  <p class="sub">Talk to our receptionist: questions and bookings</p>
+  <div id="orb" class="orb">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#7a746b" stroke-width="1.8"
+         stroke-linecap="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/>
+      <path d="M19 11a7 7 0 0 1-14 0M12 18v3"/></svg>
+  </div>
+  <button id="btn">Call</button>
+  <p id="status">Press Call and allow microphone access.</p>
+  <div id="log"></div>
+</div>
+
+<script>
+const SLUG = "{{SLUG}}";
+const { Room, RoomEvent, Track } = LivekitClient;
+const btn = document.getElementById("btn"), statusEl = document.getElementById("status"),
+      orb = document.getElementById("orb"), logEl = document.getElementById("log");
+let room = null;
+
+function setStatus(t) { statusEl.textContent = t; }
+function addLine(who, text) {
+  const p = document.createElement("p");
+  p.innerHTML = `<span class="who"></span> <span></span>`;
+  p.children[0].textContent = who + ":"; p.children[1].textContent = text;
+  logEl.appendChild(p); logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function startCall() {
+  btn.disabled = true; setStatus("Connecting…");
+  try {
+    const res = await fetch("/api/token", { method: "POST", headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ slug: SLUG }) });
+    if (!res.ok) throw new Error("Could not start the call");
+    const { url, token } = await res.json();
+
+    room = new Room({ adaptiveStream: true, dynacast: true });
+    room.on(RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === Track.Kind.Audio) document.body.appendChild(track.attach());
+    });
+    room.on(RoomEvent.ParticipantAttributesChanged, (changed, p) => {
+      const s = p.attributes["lk.agent.state"];
+      if (s) { orb.className = "orb " + s; setStatus({ listening: "Listening…", thinking: "Thinking…",
+               speaking: "Speaking…", initializing: "Connecting…" }[s] || ""); }
+    });
+    room.on(RoomEvent.Disconnected, endCallUi);
+    // Live captions: the agent publishes transcripts on the "lk.transcription" text stream.
+    room.registerTextStreamHandler("lk.transcription", async (reader, info) => {
+      const text = await reader.readAll();
+      if (reader.info.attributes?.["lk.transcription_final"] === "false") return;
+      if (text.trim()) addLine(info.identity === room.localParticipant.identity ? "You" : "Receptionist", text);
+    });
+
+    await room.connect(url, token);
+    await room.localParticipant.setMicrophoneEnabled(true);
+    await room.startAudio();
+    btn.textContent = "Hang up"; btn.className = "hangup"; btn.disabled = false;
+    setStatus("Connected. Waiting for the receptionist…");
+  } catch (e) {
+    console.error(e); setStatus("Couldn't connect: " + e.message);
+    btn.disabled = false; room = null;
+  }
+}
+
+function endCallUi() {
+  orb.className = "orb"; btn.textContent = "Call"; btn.className = ""; btn.disabled = false;
+  setStatus("Call ended."); room = null;
+}
+
+btn.onclick = () => room ? room.disconnect() : startCall();
+</script>
+</body>
+</html>
