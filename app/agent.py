@@ -46,15 +46,17 @@ def build_stt(vad):
 
 
 def build_llm():
-    # Open-weight models on Groq (Apache 2.0). Llama 3.x was retired from Groq's free tier
-    # in Aug 2026. Each model has its own rate limit, so the second one takes over if the
-    # first is rate limited or down. Low reasoning effort keeps replies fast.
-    models = os.getenv("GROQ_LLM_MODELS", "openai/gpt-oss-120b,openai/gpt-oss-20b")
-    return llm.FallbackAdapter(
-        [groq.LLM(model=m.strip(), temperature=0.3, reasoning_effort="low")
-         for m in models.split(",") if m.strip()],
-        attempt_timeout=5.0,
-    )
+    # Open-weight models on Groq. Llama 3.x was retired from Groq's free tier in Aug 2026.
+    # Each model has its OWN free-tier limit (30 requests / 8K tokens per minute), so the
+    # FallbackAdapter moves to the next model when one is rate limited or down.
+    models = os.getenv("GROQ_LLM_MODELS",
+                       "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b")
+    llms = []
+    for m in (x.strip() for x in models.split(",") if x.strip()):
+        # gpt-oss: low reasoning keeps replies fast. Qwen: turn thinking off.
+        effort = "none" if m.startswith("qwen") else "low"
+        llms.append(groq.LLM(model=m, temperature=0.3, reasoning_effort=effort))
+    return llm.FallbackAdapter(llms, attempt_timeout=5.0)
 
 
 def build_tts():
@@ -226,6 +228,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     _wire_logging(session, calllog)
+    _wire_error_handling(session, calllog)
     _wire_silence_handling(session, ctx)
 
     async def _on_shutdown():
@@ -284,6 +287,16 @@ def _wire_logging(session: AgentSession, calllog: CallLogger):
             total = ev.created_at - turn["user_stopped_at"]
             calllog.log("latency", {"total_ms": round(total * 1000), **turn["stages"]})
             turn["user_stopped_at"] = None
+
+
+def _wire_error_handling(session: AgentSession, calllog: CallLogger):
+    """If every model fails (e.g. all rate limited), say so instead of going silent."""
+    @session.on("error")
+    def _err(ev):
+        calllog.log("error", {"source": type(ev.source).__name__, "error": str(ev.error)[:500]})
+        if isinstance(ev.source, llm.LLM):
+            session.say("Sorry, I'm having a little trouble right now. "
+                        "Could you say that again in a moment?")
 
 
 def _wire_silence_handling(session: AgentSession, ctx: JobContext):
